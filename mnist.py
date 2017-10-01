@@ -13,13 +13,13 @@ time = tf.constant(0.0)
 d0 = 1
 
 d_0 = 200
-d_1 = 1024
+d_1 = 128
 d_2 = 128
 d_3 = 64
 
 d1 = 104
-d2 = 328
-d3 = 3024
+d2 = 228
+d3 = 328
 d4 = 1
 
 learning_rate = 0.001
@@ -32,65 +32,36 @@ epochs = 2000
 ################# GENERATOR ##########3333
 Z = tf.placeholder(tf.float32, shape=[batch_size, d_0])
 
-[Z1], W_0, b_0 = net.affine([Z], d_0, d_1, "G0")
+[Z1], vs_0 = net.affine([Z], d_0, d_1*7*7, "G_full")
 Z1 = tf.nn.relu(Z1)
-if normalize_G:
-    Z1, = net.normalize([Z1], [0])
+Z1, = net.normalize([Z1], [0])
+Z1 = tf.reshape(Z1, [-1, 7, 7, d_1])
 
-[Z2], W_1, b_1 = net.affine([Z1], d_1, d_2 * 7 * 7, "G1")
-Z2 = tf.nn.relu(Z2)
-Z2 = tf.reshape(Z2, [-1, 7, 7, d_2])
-if normalize_G:
-    Z2, = net.normalize([Z2], [0])
+[X_gen], vs_1 = net.deconv_net([Z1], [d_1, d_2, d_3, d0], [4, 4, 4], [1, 2, 2], batch_size, [7, 7], "G_conv")
 
+X_gen = tf.nn.sigmoid(X_gen)
 
-[Z3], W_2, b_2 = net.deconv([Z2], 4, 2, d_2, d_3, [batch_size, 14, 14], "G2")
-Z3 = tf.nn.relu(Z3)
-if normalize_G:
-    Z3, = net.normalize([Z3], [0, 1, 2])
-
-[X_gen], W_3, b_3 = net.deconv([Z3], 4, 2, d_3, d0, [batch_size, 28, 28], "G3")
-X_gen = tf.nn.sigmoid(X_gen)# + 0.01 * X_gen
-
-generator = [
-    W_0, b_0, 
-    W_1, b_1, 
-    W_2, b_2, 
-    W_3, b_3
-    ]
+generator = vs_0 + vs_1
 
 tf.summary.image('generated', X_gen, max_outputs=16)
 
 ##################### DISCRIMINATOR #######
 
-[X1, X1_gen], W0, b0 = net.conv([X, X_gen], 4, 2, d0, d1, "D0")
+[X1, X1_gen], vs0 = net.conv_net([X, X_gen], [d0, d1, d2, d3], [4, 4, 4], [2, 2, 1], "D_conv")
+                               
 X1 = tf.nn.relu(X1)
 X1_gen = tf.nn.relu(X1_gen)
-if normalize_D:
-    X1, X1_gen = net.normalize([X1, X1_gen], [0, 1, 2])
+X1, X1_gen = net.normalize([X1, X1_gen], [0, 1, 2])
+X1 = tf.reshape(X1, [-1, 7*7*d3])
+X1_gen = tf.reshape(X1_gen, [-1, 7*7*d3])
 
-[X2, X2_gen], W1, b1 = net.conv([X1, X1_gen], 4, 2, d1, d2, "D1")
-X2 = tf.reshape(X2, [-1, 7*7*d2])
-X2_gen = tf.reshape(X2_gen, [-1, 7*7*d2])
-X2 = tf.nn.relu(X2)
-X2_gen = tf.nn.relu(X2_gen)
-if normalize_D:
-    X2, X2_gen = net.normalize([X2, X2_gen], [0])
-
-
-[X3, X3_gen], W2, b2 = net.affine([X2, X2_gen], 7*7*d2, d3, "D2")
-X3 = tf.nn.relu(X3)
-X3_gen = tf.nn.relu(X3_gen)
-if normalize_D:
-    X3, x3_gen = net.normalize([X3, X3_gen], [0])
-
-[D_real, D_gen], W3, b3 = net.affine([X3, X3_gen], d3, 1, "D3")
+[D_real, D_gen], vs1 = net.affine([X1, X1_gen], 7*7*d3, 1, "D")
     
 tf.summary.histogram("D_real", D_real)
 tf.summary.histogram("D_gen", D_gen)
 
 
-discriminator = [W0, b0, W1, b1, W2, b2, W3]
+discriminator = vs0 + vs1
 
 ######################### COSTS #############
 '''
@@ -126,6 +97,7 @@ dist = tf.norm(tf.reshape(X - X_gen, [batch_size, -1]), axis=1)
 #D_cost += 0.001 * tf.reduce_mean(tf.square(tf.nn.relu(D_real - D_gen) / (dist+0.1)))
 #G_cost += 0.001 * tf.reduce_mean(tf.square(tf.nn.relu(D_gen - D_real) / (dist+0.1)))
 
+D_cost += 0.1 * tf.reduce_mean(tf.square(vs1[0]))
 
 opt = tf.train.AdamOptimizer(learning_rate, beta1=0.5)
 #opt = tf.train.GradientDescentOptimizer(learning_rate)

@@ -7,7 +7,7 @@ def affine(xs, d0, d1, info):
             stddev=1.0 / tf.sqrt(d0*1.0)),
                         name=info+"_W")
     b = tf.Variable(tf.zeros([d1]), name=info+"_b")
-    return ([tf.matmul(x, W) + b for x in xs], W, b)
+    return ([tf.matmul(x, W) + b for x in xs], [W, b])
 
 def deconv(xs, width, stride, d0, d1, shape, info):
     W = tf.Variable(tf.random_normal([width, width, d1, d0],
@@ -15,7 +15,7 @@ def deconv(xs, width, stride, d0, d1, shape, info):
                         name=info+"_W")
     b = tf.Variable(tf.zeros([d1]), name=info+"_b")
     return ([tf.nn.conv2d_transpose(x, W, shape + [d1], [1, stride, stride, 1], 'SAME') + b
-                 for x in xs], W, b)
+                 for x in xs], [W, b])
 
 def conv(xs, width, stride, d0, d1, info):
     W = tf.Variable(tf.random_normal([width, width, d0, d1],
@@ -23,11 +23,47 @@ def conv(xs, width, stride, d0, d1, info):
                         name=info+"_W")
     b = tf.Variable(tf.zeros([d1]), name=info+"_b")
     return ([tf.nn.conv2d(x, W, [1, stride, stride, 1], 'SAME') + b
-                 for x in xs], W, b)
+                 for x in xs], [W, b])
 
 
-def mixed_deconv_net(xs, dims, widths, strides, info):
-    
+def deconv_net(xs, dims, widths, strides, batch_size, shape, info, apply_norm=True):
+    variables = []
+    for i in range(len(dims)-1):
+        shape = [strides[i]*s for s in shape]
+        xs, vs = deconv(xs, widths[i], strides[i], dims[i], dims[i+1],
+                     [batch_size]+shape, info + str(i))
+        variables = variables + vs
+        if i < len(dims)-2:
+            xs = [tf.nn.relu(x) for x in xs]
+            if apply_norm:
+                xs = normalize(xs, [0, 1, 2])
+    return (xs, variables)
+
+
+def conv_net(xs, dims, widths, strides, info, apply_norm=True):
+    variables = []
+    for i in range(len(dims)-1):
+        xs, vs = conv(xs, widths[i], strides[i], dims[i], dims[i+1],
+                     info + str(i))
+        variables = variables + vs
+        if i < len(dims)-2:
+            xs = [tf.nn.relu(x) for x in xs]
+            if apply_norm:
+                xs = normalize(xs, [0, 1, 2])
+    return (xs, variables)
+
+
+def affine_net(xs, dims, info, apply_norm=True):
+    variables = []
+    for i in range(len(dims)-1):
+        xs, vs = affine(xs, dims[i], dims[i+1], info + str(i))
+        variables = variables + vs
+        if i < len(dims)-2:
+            xs = [tf.nn.relu(x) for x in xs]
+            if apply_norm:
+                xs = normalize(xs, [0])
+    return (xs, variables)
+
 
 '''
 def normalize(X, dims=[0], variance_epsilon=0.01, block=False):
