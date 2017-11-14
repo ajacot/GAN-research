@@ -2,6 +2,7 @@ import numpy
 import tensorflow as tf
 
 import network as net
+import Fisher
 
 batch_size = 32
 
@@ -22,7 +23,7 @@ d2 = 228
 d3 = 328
 d4 = 1
 
-learning_rate = 0.001
+learning_rate = 0.003
 from_save = False
 
 normalize_G = True
@@ -89,20 +90,31 @@ tf.summary.scalar("G_cost", G_cost)
 tf.summary.tensor_summary("D_gen", D_gen)
 tf.summary.tensor_summary("D_real", D_real)
 
-dist = tf.norm(tf.reshape(X - X_gen, [batch_size, -1]), axis=1)
+#dist = tf.norm(tf.reshape(X - X_gen, [batch_size, -1]), axis=1)
 
-#D_cost += 0.001 * tf.reduce_mean(tf.square(D_real)) + 0.001 * tf.reduce_mean(tf.square(D_gen))
-#G_cost += 0.001 * tf.reduce_mean(tf.square(D_real)) + 0.001 * tf.reduce_mean(tf.square(D_gen))
+D_cost += 0.1 * tf.reduce_mean(tf.square(D_real)) + 0.1 * tf.reduce_mean(tf.square(D_gen))
+G_cost += 0.1 * tf.reduce_mean(tf.square(D_real)) + 0.1 * tf.reduce_mean(tf.square(D_gen))
 
 #D_cost += 0.001 * tf.reduce_mean(tf.square(tf.nn.relu(D_real - D_gen) / (dist+0.1)))
 #G_cost += 0.001 * tf.reduce_mean(tf.square(tf.nn.relu(D_gen - D_real) / (dist+0.1)))
 
-D_cost += 0.1 * tf.reduce_mean(tf.square(vs1[0]))
-
+#D_cost += 0.1 * tf.reduce_mean(tf.square(vs1[0]))
+'''
 opt = tf.train.AdamOptimizer(learning_rate, beta1=0.5)
 #opt = tf.train.GradientDescentOptimizer(learning_rate)
 step_D = opt.minimize(D_cost, var_list=discriminator)
 step_G = opt.minimize(G_cost, var_list=generator)
+'''
+opt = tf.train.GradientDescentOptimizer(learning_rate)
+scalings = [tf.Variable(1.0) for _ in discriminator + generator]
+full_F = Fisher.linear_Fisher([D_real, D_gen], discriminator + generator)
+grads = tf.gradients(D_cost, discriminator) + tf.gradients(G_cost, generator)
+nat_grads, err = Fisher.naturalize_gradients(grads, 
+        [g*(s+0.001) for (g, s) in zip(grads, scalings)], full_F, 5)
+step_scalings = [tf.assign(s, s*0.99 + 0.01 * tf.norm(nat_g) / tf.norm(g)) for (g, nat_g, s) in zip(grads, nat_grads, scalings)]
+
+step = opt.apply_gradients(zip(nat_grads, discriminator + generator))
+
 
 
 delta_X = tf.gradients(tf.reduce_mean(D_real), [X])[0]
@@ -147,7 +159,7 @@ for t in range(1000):
         #grads = sess.run(gen_gradients, feed_dict={X:x, Z:z})
         #print('calculate')
 
-        _, _, cost = sess.run([step_D, step_G, D_cost], feed_dict={X:x, Z:z, time:t})
+        _, cost = sess.run([step, D_cost], feed_dict={X:x, Z:z, time:t})
         print(cost)
 
     if t % 5 == 0:

@@ -26,7 +26,8 @@ def conv(xs, width, stride, d0, d1, info):
                  for x in xs], [W, b])
 
 
-def deconv_net(xs, dims, widths, strides, batch_size, shape, info, apply_norm=True):
+def deconv_net(xs, dims, widths, strides, batch_size, shape,
+               info, apply_norm=True, non_lin=tf.nn.relu):
     variables = []
     for i in range(len(dims)-1):
         shape = [strides[i]*s for s in shape]
@@ -34,32 +35,34 @@ def deconv_net(xs, dims, widths, strides, batch_size, shape, info, apply_norm=Tr
                      [batch_size]+shape, info + str(i))
         variables = variables + vs
         if i < len(dims)-2:
-            xs = [tf.nn.relu(x) for x in xs]
+            xs = [non_lin(x) for x in xs]
             if apply_norm:
                 xs = normalize(xs, [0, 1, 2])
     return (xs, variables)
 
 
-def conv_net(xs, dims, widths, strides, info, apply_norm=True):
+def conv_net(xs, dims, widths, strides,
+             info, apply_norm=True, non_lin=tf.nn.relu):
     variables = []
     for i in range(len(dims)-1):
         xs, vs = conv(xs, widths[i], strides[i], dims[i], dims[i+1],
                      info + str(i))
         variables = variables + vs
         if i < len(dims)-2:
-            xs = [tf.nn.relu(x) for x in xs]
+            xs = [non_lin(x) for x in xs]
             if apply_norm:
                 xs = normalize(xs, [0, 1, 2])
     return (xs, variables)
 
 
-def affine_net(xs, dims, info, apply_norm=True):
+def affine_net(xs, dims,
+               info, apply_norm=True, non_lin=tf.nn.relu):
     variables = []
     for i in range(len(dims)-1):
         xs, vs = affine(xs, dims[i], dims[i+1], info + str(i))
         variables = variables + vs
         if i < len(dims)-2:
-            xs = [tf.nn.relu(x) for x in xs]
+            xs = [non_lin(x) for x in xs]
             if apply_norm:
                 xs = normalize(xs, [0])
     return (xs, variables)
