@@ -1,52 +1,6 @@
 import numpy
 import tensorflow as tf
 
-########## algorithmes #########
-
-def scalar_prod(xs, ys):
-    return sum([tf.reduce_sum(x*y) for (x, y) in zip(xs, ys)])
-
-def norm(xs):
-    return tf.sqrt(scalar_prod(xs, xs))
-
-def conjgrad(T, b, x, n=100):
-    r = [ib - iT for (ib, iT) in zip(b, T(x))]
-    p = r
-    rsold = scalar_prod(r, r)
-
-    err_hist = [rsold]
-
-    for i in range(n):
-        Tp = T(p)
-        alpha = rsold / scalar_prod(p, Tp)
-        x = [ix + alpha * ip for (ix, ip) in zip(x, p)]
-        r = [ir - alpha * iTp for (ir, iTp) in zip(r, Tp)]
-        rsnew = scalar_prod(r, r)
-        
-        p = [ir + (rsnew / rsold) * ip for (ir, ip) in zip(r, p)]
-        rsold = rsnew
-        err_hist = err_hist + [rsold]
-
-    return x, err_hist
-
-
-def orthogonalize(vs):
-    norms = []
-    for i in range(len(vs)):
-        for j in range(i):
-            scij = scalar_prod(vs[i], vs[j])
-            vs[i] = [vi - vj * scij for (vi, vj) in zip(vs[i], vs[j])]
-        ni = norm(vs[i])
-        vs[i] = [vi / (ni+0.001) for vi in vs[i]]
-    return vs
-
-def power_eig(T, vs, n=5):
-    for t in range(n):
-        T_vs = [T(v) for v in vs]
-        es = [scalar_prod(v, T_v) for (v, T_v) in zip(vs, T_vs)]
-        vs = orthogonalize(T_vs)
-    return vs, es
-
 ############
 
 
@@ -65,7 +19,8 @@ def linear_Fisher(y, x, a=0.01):
     def F(dxs):
       dys = fwd_gradients(y, x, dxs)
       ddxs = tf.gradients(y, x, dys)
-      return [ddx * (1.0 - a) + a * dx for (ddx, dx) in zip(ddxs, dxs)]
+      batch_size = tf.cast(tf.shape(y[0])[0], tf.float32)
+      return [ddx * (1.0 - a) / batch_size + a * dx for (ddx, dx) in zip(ddxs, dxs)]
     return F
 
 def sigmoid_Fisher(ys, xs, a=0.01):
@@ -73,14 +28,67 @@ def sigmoid_Fisher(ys, xs, a=0.01):
     def F(dxs):
       dys = fwd_gradients(ys, xs, dxs)
       ddxs = tf.gradients(ys, xs, [dy * (sig_y * (1-sig_y)) for (dy, sig_y) in zip(dys, sigmoid_ys)])
-      return [ddx * (1.0 - a) + a * dx for (ddx, dx) in zip(ddxs, dxs)]
+      batch_size = tf.cast(tf.shape(y[0])[0], tf.float32)
+      return [ddx * (1.0 - a) / batch_size + a * dx for (ddx, dx) in zip(ddxs, dxs)]
     return F
+
+def softmax_Fisher(ys, xs, a=0.01):
+    def F(dxs):
+      dys = fwd_gradients(ys, xs, dxs)
+      ddxs = tf.gradients(ys, xs, dys - tf.reduce_mean(dys, axis=1))
+      batch_size = tf.cast(tf.shape(y[0])[0], tf.float32)
+      return [ddx * (1.0 - a) / batch_size + a * dx for (ddx, dx) in zip(ddxs, dxs)]
+    return F
+
 
 def Hessian(y, xs):
     def H(dxs):
       grad_xs = tf.gradients([y], xs)
       return [tf.zeros_like(x) if h==None else h for (h, x) in zip(tf.gradients(grad_xs, xs, dxs), xs)]
     return H
+
+
+
+################# full computation ##########
+
+def derivative(sess, ys, xs, feed_dict={}):
+    x_shapes = sess.run([tf.shape(x) for x in xs], feed_dict=feed_dict)
+    y_shapes = sess.run([tf.shape(y) for y in ys], feed_dict=feed_dict)
+    N = sum([numpy.prod(s) for s in x_shapes])
+    M = sum([numpy.prod(s) for s in y_shapes])
+
+    D = numpy.zeros([N, M])
+
+    ii = 0
+    for (y, sh) in zip(ys, y_shapes):
+        print(y.name)
+        index = tf.placeholder(tf.int32)
+        comp_grad = tf.gradients(tf.reshape(y, [-1])[index], xs)
+        for i in range(numpy.prod(sh)):
+            #dy = tf.reshape(tf.one_hot(i, numpy.prod(sh)), tf.shape(y))
+            grads = sess.run(comp_grad, feed_dict={**feed_dict, index:i})
+            D[:, ii] = numpy.concatenate([
+                    numpy.reshape(grad, [-1])
+                    for grad in grads])
+            ii += 1
+    return D
+
+def compute_linear_Fisher(sess, ys, xs, feed_dict={}):
+    D = derivative(sess, ys, xs, feed_dict)
+    return numpy.dot(D, numpy.transpose(D)) / D.shape[1]    
+
+def compute_sigmoid_Fisher(sess, ys, xs, feed_dict={}):
+    D = derivative(sess, ys, xs, feed_dict)
+    sig_ys = sess.run([tf.sigmoid(y) for y in ys], feed_dict=feed_dict)
+    sig = numpy.concatenate([numpy.reshape(sig_y * (1-sig_y), [-1])
+                             for sig_y in sig_ys])
+    return numpy.dot(D*sig, numpy.transpose(D)) / D.shape[1]    
+
+'''
+def compute_softmax_Fisher(sess, ys, xs, feed_dict={}):
+    D = derivative(sess, ys, xs, feed_dict)
+    return numpy.dot(D, numpy.transpose(D)) / D.shape[1]    
+'''
 
 def finite_diff_Hessian(sess, xs, grads, d=0.001, feed_dict={}):
     x0s = sess.run(xs, feed_dict=feed_dict)
@@ -109,89 +117,6 @@ def finite_diff_Hessian(sess, xs, grads, d=0.001, feed_dict={}):
 
 def compute_Hessian(sess, y, xs, feed_dict={}):
     return derivative(sess, tf.gradients(y, xs), xs, feed_dict)
-
-def derivative(sess, ys, xs, feed_dict={}):
-    x_shapes = sess.run([tf.shape(x) for x in xs], feed_dict=feed_dict)
-    y_shapes = sess.run([tf.shape(y) for y in ys], feed_dict=feed_dict)
-    N = sum([numpy.prod(s) for s in x_shapes])
-    M = sum([numpy.prod(s) for s in y_shapes])
-
-    D = numpy.zeros([N, M])
-
-    ii = 0
-    for (y, sh) in zip(ys, y_shapes):
-        print(y.name)
-        index = tf.placeholder(tf.int32)
-        comp_grad = tf.gradients(tf.reshape(y, [-1])[index], xs)
-        for i in range(numpy.prod(sh)):
-            #dy = tf.reshape(tf.one_hot(i, numpy.prod(sh)), tf.shape(y))
-            grads = sess.run(comp_grad, feed_dict={**feed_dict, index:i})
-            D[:, ii] = numpy.concatenate([
-                    numpy.reshape(grad, [-1])
-                    for grad in grads])
-            ii += 1
-    return D
-
-def naturalize_gradients(dx, dx0, F, n=5):
-    nat_dx, err = conjgrad(F, dx, dx0, n)
-    
-    return nat_dx, err
-
-
-def natural_gradients(c, x, F, n=5):
-    dx = tf.gradients(c, x)
-    nat_dx, err = conjgrad(F, dx, dx, n)
-    
-    return zip(nat_dx, x), err
-
-
-def NaturalGradientOptimizer(learning_rate, c, xs, F, n=3):
-    opt = tf.train.GradientDescentOptimizer(learning_rate)
-
-    dxs = tf.gradients(c, xs)
-    
-    last_dxs = [tf.Variable(dx) for dx in dxs]
-
-    nat_dxs, err = conjgrad(F, dxs, last_dxs, n)
-    
-    steps = [opt.apply_gradients(zip(nat_dxs, xs))]
-    steps = steps + [tf.assign(last_dx, nat_dx) for (last_dx, nat_dx) in zip(last_dxs, nat_dxs)]
-    return steps, err, [last_dx.initializer for last_dx in last_dxs]
-
-'''
-def NaturalGradientOptimizer(learning_rate, c, ys, xs, n=3):
-    opt = tf.train.AdamOptimizer(learning_rate)
-    
-    comp = [[tf.Variable(tf.random_normal(tf.shape(x), stddev=0.001)) for x in xs] for i in range(n)]
-    scale = tf.Variable(1.0)
-
-    grad = tf.gradients(c, xs)
-
-    nat_grad = [g * scale for g in grad]
-
-    #scaling = []
-    steps = []
-
-    for i in range(n):
-        next_comp = apply_LMT(ys, xs, comp[i])
-        scaling = sum([tf.reduce_sum(next_c*c) for (next_c, c) in zip(next_comp, comp[i])])
-        next_comp = [0.5*c + 0.5*next_c for (next_c, c) in zip(next_comp, comp[i])]
-        for j in range(i):
-            scalar_prod = sum([tf.reduce_sum(next_c*c) for (next_c, c) in zip(next_comp, comp[j])])
-            next_comp = [next_c - scalar_prod*c for (next_c, c) in zip(next_comp, comp[j])]
-
-        norm = sum([tf.reduce_sum(tf.square(next_c)) for next_c in next_comp])
-        steps = steps + [tf.assign(c, next_c) for (next_c, c) in zip(next_comp, comp[i])]
-
-        comp_times_grad = sum([tf.reduce_sum(next_c*g) for (next_c, g) in zip(next_comp, grad)])
-        nat_grad = [nat_g - comp_times_grad * next_c * (1.0 / (scaling+0.001) - scale) for (next_c, nat_g) in zip(next_comp, nat_grad)]
-
-    steps = steps + tf.assign(scale, scaling)
-
-    step = opt.apply_gradients(zip(nat_grad, xs))
-
-    return [step] + steps
-'''
 
 
 '''

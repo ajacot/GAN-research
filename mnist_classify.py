@@ -6,16 +6,16 @@ import Fisher
 
 global_step = tf.Variable(0, trainable=False)
 
-batch_size = 128
-learning_rate = tf.train.exponential_decay(0.2, global_step,
+batch_size = 512
+learning_rate = tf.train.exponential_decay(0.1, global_step,
                                            200.0, 0.5, staircase=True)
-
-X = tf.placeholder(tf.float32, shape=[None, 14, 14, 1])
-Y = tf.placeholder(tf.float32, shape=[None])
-
 
 def soft_relu(x):
     return tf.log(1+tf.exp(x))
+
+
+X = tf.placeholder(tf.float32, shape=[None, 14, 14, 1])
+Y = tf.placeholder(tf.float32, shape=[None])
 
 [X1], vs0 = net.conv_net([X], [1, 6, 4], [3, 2], [2, 2], "D_conv", False, soft_relu)
 X1 = soft_relu(tf.reshape(X1, [-1, 4*4*4]))
@@ -66,7 +66,7 @@ mnist = input_data.read_data_sets('MNIST_data')#, one_hot=True)
 sess = tf.Session()
 sess.run(tf.global_variables_initializer())
 
-epochs = 8
+epochs = 20
 eig_Fs = []
 eig_Hs = []
 eig_normed_Hs = []
@@ -76,32 +76,35 @@ costs = []
 N = sum([numpy.prod(sh) for sh in sess.run([tf.shape(x) for x in theta])])
 print(N)
 
+batch = mnist.train.next_batch(batch_size)
+x = numpy.reshape(batch[0], [batch_size, 28, 28, 1])
+x = x[:, 0:28:2, 0:28:2, :]
+y = batch[1] == 0
+        
+
 for t in range(epochs):
     
     H = numpy.zeros([N, N])
     F = numpy.zeros([N, N])
-    n_batches = 3
+    n_batches = 1
     for t in range(n_batches):
         print(t)
+        '''
         batch = mnist.train.next_batch(batch_size)
         x = numpy.reshape(batch[0], [batch_size, 28, 28, 1])
         x = x[:, 0:28:2, 0:28:2, :]
         y = batch[1] == 0
-            
+        ''' 
         print("compute H and F")
-        H += Fisher.compute_Hessian(sess, cost, theta, feed_dict={X:x, Y:y}) / n_batches
-        #H += Fisher.finite_diff_Hessian(sess, theta, tf.gradients(cost, theta), feed_dict={X:x, Y:y}) * (1.0 / n_batches)
-
-        D = Fisher.derivative(sess, [YY], theta, feed_dict={X:x, Y:y}) / batch_size
-        sig = sess.run(tf.sigmoid(YY), feed_dict={X:x, Y:y})
-        sig = numpy.reshape(sig*(1-sig), [-1])
-        F += numpy.dot(D*sig, numpy.transpose(D)) * (1.0 / n_batches)
+        H += Fisher.compute_Hessian(sess, cost, theta, feed_dict={X:x, Y:y})
+        
+        F += Fisher.compute_sigmoid_Fisher(sess, [YY], theta, feed_dict={X:x, Y:y}) * (1.0 / n_batches)
 
     print("compute normed_H")
     
     val_F, vec_F = numpy.linalg.eigh(F)
-    normed_H = numpy.transpose(vec_F) / numpy.sqrt(numpy.maximum(val_F, 0.0001))
-    normed_H = numpy.linalg.multi_dot([normed_H, H, numpy.transpose(normed_H)])
+    normed_H = vec_F / numpy.sqrt(numpy.maximum(val_F, 0.00000001))
+    normed_H = numpy.linalg.multi_dot([numpy.transpose(normed_H), H, normed_H])
 
     print("compute eigenvalues")
     eig_Fs = eig_Fs + [val_F]
@@ -109,11 +112,7 @@ for t in range(epochs):
     eig_normed_Hs = eig_normed_Hs + [numpy.linalg.eigvalsh(normed_H)]
     eig_diffs = eig_diffs + [numpy.linalg.eigvalsh(H - F)]
     
-    for _ in range(50):
-        batch = mnist.train.next_batch(batch_size)
-        x = numpy.reshape(batch[0], [batch_size, 28, 28, 1])
-        x = x[:, 0:28:2, 0:28:2, :]
-        y = batch[1] == 0
+    for _ in range(epochs * 3 + 1):
         
         _, err = sess.run([step, cost], feed_dict={X:x, Y:y})
         print(err)
@@ -125,6 +124,5 @@ sess.close()
 
 import matplotlib.pyplot as P
 
-P.plot(costs)
 
-P.plot(numpy.stack(eig_Hs));P.show()
+P.plot(costs, numpy.stack(eig_normed_Hs));P.show()
