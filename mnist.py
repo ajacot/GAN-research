@@ -130,7 +130,7 @@ mnist = input_data.read_data_sets('MNIST_data', one_hot=True)
 sess = tf.Session()
 
 
-'''
+
 if from_save:
     saver.restore(sess, "SAVE/model_mnist89.ckpt")
 else:
@@ -194,4 +194,4 @@ for ix in range(w):
     for iy in range(h):
         arr[iy, ix].imshow(x_gen[iy*w + ix, :, :, 0], cmap='gray')
 P.show()
-
+'''
