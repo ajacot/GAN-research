@@ -17,8 +17,10 @@ def damp_gradients(dxs, damping=0.001, e=0.01):
     update_averages = ema.apply(dxs)
     
     mom = [ema.average(x) for x in dxs]
-    damp = damping * linalg.scalar_prod(mom, dxs) / (linalg.norm(mom_D)+e)
+    damp = damping * linalg.scalar_prod(mom, dxs) / (linalg.norm(mom)+e)
     return [g - m*damp for (g, m) in zip(dxs, mom)], update_averages
+
+
 
 
 '''

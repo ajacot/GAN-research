@@ -1,6 +1,5 @@
 import tensorflow as tf
 
-
 ########## algorithmes #########
 
 def scalar_prod(xs, ys):
@@ -31,18 +30,35 @@ def conjgrad(T, b, x, n=100):
 
 
 def orthogonalize(vs):
-    norms = []
     for i in range(len(vs)):
         for j in range(i):
             scij = scalar_prod(vs[i], vs[j])
             vs[i] = [vi - vj * scij for (vi, vj) in zip(vs[i], vs[j])]
         ni = norm(vs[i])
-        vs[i] = [vi / (ni+0.001) for vi in vs[i]]
+        vs[i] = [vi / (ni+0.000) for vi in vs[i]]
     return vs
 
-def power_eig(T, vs, n=5):
-    for t in range(n):
+def power_eig(T, vs, num_steps=5):
+    for t in range(num_steps):
         T_vs = [T(v) for v in vs]
-        es = [scalar_prod(v, T_v) for (v, T_v) in zip(vs, T_vs)]
+        if t==num_steps-1:
+            es = [scalar_prod(v, T_v) for (v, T_v) in zip(vs, T_vs)]
         vs = orthogonalize(T_vs)
     return vs, es
+
+
+def keep_eigs(T, shapes, n = 5, num_steps = 5, shift = 0.0):
+    if shift != 0.0:
+        def TT(dxs):
+            return [dx * shift + Tdx for (dx, Tdx) in zip(dxs, T(dxs))]
+    else:
+        TT = T
+        
+    eig_vecs = [[tf.Variable(tf.random_normal(sh, 0.0, 1.0 / tf.sqrt(tf.cast(tf.reduce_prod(sh), tf.float32))))
+                 for sh in shapes]
+                for i in range(n)]
+    new_eig_vecs, eigs = power_eig(TT, eig_vecs, num_steps)
+    eigs = [e - shift for e in eigs]
+    return eigs, eig_vecs, [tf.assign(v, new_v)
+         for (vs, new_vs) in zip(eig_vecs, new_eig_vecs)
+         for (v, new_v) in zip(vs, new_vs)]

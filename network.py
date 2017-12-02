@@ -68,17 +68,20 @@ def affine_net(xs, dims,
     return (xs, variables)
 
 
-'''
-def normalize(X, dims=[0], variance_epsilon=0.01, block=False):
-    mean, var = tf.nn.moments(X, dims, keep_dims=True)
-    if block:
-        mean = tf.stop_gradient(mean)
-        var = tf.stop_gradient(var)
-    return (X - mean) / tf.sqrt(var + variance_epsilon)
-'''
 def normalize(X, dims=[0], variance_epsilon=0.01):
     mean, var = tf.nn.moments(X[0], dims, keep_dims=True)
+    #mean = tf.stop_gradient(mean)
+    #var = tf.stop_gradient(var)
     return [tf.nn.batch_normalization(x, mean, var, None, None, variance_epsilon) for x in X]
+
+'''
+def normalize2(X, n=0, num_steps=3, dims=[0], variance_epsilon=0.01):
+    mean, var = tf.nn.moments(X[0], dims, keep_dims=True)
+    X_norm = [tf.nn.batch_normalization(x, mean, var, None, None, variance_epsilon) for x in X]
+    def N(dx):
+        tf.reduce_sum(X_norm * dx, axis=dims) ?????
+    eigs, vecs, step_pow = linalg.keep_eigs(N, [tf.shape(mean)], n, num_steps)
+'''
 
 def get_subset(net, skip = 10):
     return tf.concat([

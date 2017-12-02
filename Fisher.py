@@ -25,64 +25,96 @@ def linear_Fisher(y, x, a=0.01):
 
 def sigmoid_Fisher(ys, xs, a=0.01):
     sigmoid_ys = [tf.sigmoid(y) for y in ys]
+    batch_size = tf.cast(tf.shape(dys[0])[0], tf.float32)
     def F(dxs):
       dys = fwd_gradients(ys, xs, dxs)
       ddxs = tf.gradients(ys, xs, [dy * (sig_y * (1-sig_y)) for (dy, sig_y) in zip(dys, sigmoid_ys)])
-      batch_size = tf.cast(tf.shape(y[0])[0], tf.float32)
       return [ddx * (1.0 - a) / batch_size + a * dx for (ddx, dx) in zip(ddxs, dxs)]
     return F
 
 def softmax_Fisher(ys, xs, a=0.01):
+    ps = [tf.nn.softmax(y) for y in ys]
+    shape_y = tf.shape(ys[0])
+    batch_size = tf.cast(shape_y[0], tf.float32)
+    num_classes = tf.cast(shape_y[1], tf.float32)
     def F(dxs):
       dys = fwd_gradients(ys, xs, dxs)
-      ddxs = tf.gradients(ys, xs, dys - tf.reduce_mean(dys, axis=1))
-      batch_size = tf.cast(tf.shape(y[0])[0], tf.float32)
+      ddxs = tf.gradients(ys, xs, [p*(dy - tf.reduce_sum(dy * p, axis=1, keep_dims=True)) for (dy, p) in zip(dys, ps)])
       return [ddx * (1.0 - a) / batch_size + a * dx for (ddx, dx) in zip(ddxs, dxs)]
     return F
 
 
 def Hessian(y, xs):
+    grad_xs = tf.gradients([y], xs)
     def H(dxs):
-      grad_xs = tf.gradients([y], xs)
-      return [tf.zeros_like(x) if h==None else h for (h, x) in zip(tf.gradients(grad_xs, xs, dxs), xs)]
+      return [tf.zeros_like(x) if h==None else h
+              for (h, x) in zip(tf.gradients(grad_xs, xs, dxs), xs)]
     return H
 
 
 
 ################# full computation ##########
 
-def derivative(sess, ys, xs, feed_dict={}):
-    x_shapes = sess.run([tf.shape(x) for x in xs], feed_dict=feed_dict)
-    y_shapes = sess.run([tf.shape(y) for y in ys], feed_dict=feed_dict)
-    N = sum([numpy.prod(s) for s in x_shapes])
-    M = sum([numpy.prod(s) for s in y_shapes])
+def derivative(ys, xs):
+    index = tf.placeholder(tf.int32)
+    comp_grad = [tf.gradients(tf.reshape(y, [-1])[index], xs)
+                 for y in ys]
+    def_y_shapes = [tf.shape(y) for y in ys]
+    def_x_shapes = [tf.shape(x) for x in xs]
 
-    D = numpy.zeros([N, M])
+    def calculate(sess, feed_dict={}):
+      y_shapes = sess.run(def_y_shapes, feed_dict=feed_dict)
+      x_shapes = sess.run(def_x_shapes, feed_dict=feed_dict)
+      
+      M = sum([numpy.prod(s) for s in y_shapes])
+      N = sum([numpy.prod(s) for s in x_shapes])
 
-    ii = 0
-    for (y, sh) in zip(ys, y_shapes):
-        print(y.name)
-        index = tf.placeholder(tf.int32)
-        comp_grad = tf.gradients(tf.reshape(y, [-1])[index], xs)
-        for i in range(numpy.prod(sh)):
-            #dy = tf.reshape(tf.one_hot(i, numpy.prod(sh)), tf.shape(y))
-            grads = sess.run(comp_grad, feed_dict={**feed_dict, index:i})
-            D[:, ii] = numpy.concatenate([
-                    numpy.reshape(grad, [-1])
-                    for grad in grads])
-            ii += 1
-    return D
+      D = numpy.zeros([N, M])
+      
+      ii = 0
+      for (y, c_grad, sh) in zip(ys, comp_grad, y_shapes):
+          print(y.name)
+          for i in range(numpy.prod(sh)):
+              grads = sess.run(c_grad, feed_dict={**feed_dict, index:i})
+              D[:, ii] = numpy.concatenate([
+                      numpy.reshape(grad, [-1])
+                      for grad in grads])
+              ii += 1
+      return D
+    return calculate
 
-def compute_linear_Fisher(sess, ys, xs, feed_dict={}):
-    D = derivative(sess, ys, xs, feed_dict)
-    return numpy.dot(D, numpy.transpose(D)) / D.shape[1]    
+def compute_linear_Fisher(ys, xs):
+    cal_D = derivative(ys, xs)
+    
+    def calculate(sess, feed_dict={}):
+      D = cal_D(sess, feed_dict)
+      return numpy.dot(D, numpy.transpose(D)) / D.shape[1], D
+    return calculate
 
-def compute_sigmoid_Fisher(sess, ys, xs, feed_dict={}):
-    D = derivative(sess, ys, xs, feed_dict)
-    sig_ys = sess.run([tf.sigmoid(y) for y in ys], feed_dict=feed_dict)
-    sig = numpy.concatenate([numpy.reshape(sig_y * (1-sig_y), [-1])
-                             for sig_y in sig_ys])
-    return numpy.dot(D*sig, numpy.transpose(D)) / D.shape[1]    
+def compute_sigmoid_Fisher(ys, xs):
+    cal_D = derivative(ys, xs)
+    
+    def calculate(sess, feed_dict={}):
+      D = cal_D(sess, feed_dict)
+      sig_ys = sess.run([tf.sigmoid(y) for y in ys], feed_dict=feed_dict)
+      sig = numpy.concatenate([numpy.reshape(sig_y * (1-sig_y), [-1])
+                               for sig_y in sig_ys])
+      return numpy.dot(D*sig, numpy.transpose(D)) / D.shape[1], D
+    return calculate
+
+def compute_softmax_Fisher(ys, xs):
+    cal_D = derivative(ys, xs)
+    def_sh = tf.shape(ys[0])
+    
+    def calculate(sess, feed_dict={}):
+      D = cal_D(sess, feed_dict)
+      sh = sess.run(def_sh, feed_dict)
+      
+      normed_D = numpy.reshape(D, [-1, sh[0], sh[1]])
+      normed_D = normed_D - numpy.mean(normed_D, axis=2, keepdims=True)
+      normed_D = numpy.reshape(D, [-1, sh[0] * sh[1]])
+      return numpy.dot(normed_D, numpy.transpose(normed_D)) / D.shape[1], D
+    return calculate
 
 '''
 def compute_softmax_Fisher(sess, ys, xs, feed_dict={}):
@@ -115,8 +147,8 @@ def finite_diff_Hessian(sess, xs, grads, d=0.001, feed_dict={}):
             sess.run(tf.assign(x, x0))
     return H
 
-def compute_Hessian(sess, y, xs, feed_dict={}):
-    return derivative(sess, tf.gradients(y, xs), xs, feed_dict)
+def compute_Hessian(y, xs):
+    return derivative(tf.gradients(y, xs), xs)
 
 
 '''

@@ -3,13 +3,17 @@ import tensorflow as tf
 
 import network as net
 import Fisher
+import linalg
 
 global_step = tf.Variable(0, trainable=False)
 
-learning_rate = tf.train.exponential_decay(0.1, global_step,
-                                           50.0, 0.5)
+learning_rate = tf.train.exponential_decay(8.0, global_step,
+                                           1000.0, 0.9999)
 
 '''
+from tensorflow.examples.tutorials.mnist import input_data
+mnist = input_data.read_data_sets('MNIST_data', one_hot=True)
+
 X = tf.placeholder(tf.float32, shape=[None, 14, 14, 1])
 Y = tf.placeholder(tf.float32, shape=[None])
 
@@ -36,23 +40,51 @@ Y = tf.placeholder(tf.float32, shape=[None])
 
 [YY], theta = net.affine_net([X], [k, k*2, k*2, 1], "D", False)
 
+d0 = tf.placeholder(tf.float32)
+d1 = tf.placeholder(tf.float32)
+
+i0 = 0
+j0 = 1
+
+i1 = 3
+j1 = 4
+
+d0W0 = tf.Variable(theta[0][:, j0] - theta[0][:, i0])
+d0b0 = tf.Variable(theta[1][j0] - theta[1][i0])
+d0W1 = tf.Variable(theta[2][j0, :] - theta[2][i0, :])
+
+d1W0 = tf.Variable(theta[0][:, j1] - theta[0][:, i1])
+d1b0 = tf.Variable(theta[1][j1] - theta[1][i1])
+d1W1 = tf.Variable(theta[2][j1, :] - theta[2][i1, :])
+
+reassign_ds = [v.initializer for v in [d0W0, d0b0, d0W1, d1W0, d1b0, d1W1]]
+
+add0 = [theta[0][:, i0].assign(theta[0][:, i0] + d0*d0W0),
+        theta[0][:, j0].assign(theta[0][:, j0] - d0*d0W0),
+        theta[1][i0].assign(theta[1][i0] + d0*d0b0),
+        theta[1][j0].assign(theta[1][j0] - d0*d0b0),
+        theta[2][i0, :].assign(theta[2][i0, :] + d0*d0W1),
+        theta[2][j0, :].assign(theta[2][j0, :] - d0*d0W1)]
+
+add1 = [theta[0][:, i1].assign(theta[0][:, i1] + d1*d1W0),
+        theta[0][:, j1].assign(theta[0][:, j1] - d1*d1W0),
+        theta[1][i1].assign(theta[1][i1] + d1*d1b0),
+        theta[1][j1].assign(theta[1][j1] - d1*d1b0),
+        theta[2][i1, :].assign(theta[2][i1, :] + d1*d1W1),
+        theta[2][j1, :].assign(theta[2][j1, :] - d1*d1W1)]
+
 def batch(batch_size):
     x = numpy.random.normal(numpy.zeros([batch_size, k]), 1)
-    y = numpy.mean(numpy.square(x), 1) > 1.0 / k
+    y = numpy.mean(numpy.square(x), 1) > 0.5
     return x, y
-
 
 cost = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(None, tf.reshape(Y, [-1, 1]), YY))
 
+#cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(None, Y, YY))
+
 direction = tf.placeholder(tf.float32)
 opt = tf.train.GradientDescentOptimizer(learning_rate)
-norm_theta = Fisher.scalar_prod(theta, theta)
-step = opt.minimize(direction * cost + tf.maximum(1000.0, norm_theta), var_list=theta) #, global_step=global_step)
-
-
-
-from tensorflow.examples.tutorials.mnist import input_data
-mnist = input_data.read_data_sets('MNIST_data')#, one_hot=True)
+step = opt.minimize(direction * cost, var_list=theta) #, global_step=global_step)
 
 
 sess = tf.Session()
@@ -60,36 +92,48 @@ sess = tf.Session()
 N = sum([numpy.prod(sh) for sh in sess.run([tf.shape(x) for x in theta])])
 print(N)
 
+data_x, data_y = batch(20)
+data_x2, data_y2 = batch(20)
 
-def converge(epochs = 30, batch_size  = 64, direc = 1.0):
+def converge(epochs = 600, batch_size  = 64, direc = 1.0):
     sess.run(tf.assign(global_step, 0))
     for t in range(epochs):
-        x, y = batch(batch_size)
-        _, err = sess.run([step, cost], feed_dict={X:x, Y:y, direction:direc})
+        data_x, data_y = batch(batch_size)
+        _, err = sess.run([step, cost], feed_dict={X:data_x, Y:data_y, direction:direc})
+        print(err)
     return err
 
 def scalar_prod(vs, ws):
     return sum([numpy.sum(v*w) for (v, w) in zip(vs, ws)])
 
 
-'''
-sess.run(tf.global_variables_initializer())
-converge()
-theta0 = sess.run(theta)
+def swap_neurons(W0, b0, W1, i, j, d):
+    W0_mod = W0
+
 
 sess.run(tf.global_variables_initializer())
-converge()
+#theta2 = sess.run(theta)
+print(converge())
+theta0 = sess.run(theta)
+
+
+
+sess.run(tf.global_variables_initializer())
+print(converge())
 theta1 = sess.run(theta)
 
 sess.run(tf.global_variables_initializer())
-converge()
+print(converge())
 theta2 = sess.run(theta)
 
 dxs = [v1 - v0 for (v0, v1) in zip(theta0, theta1)]
+
 dys = [v2 - v0 for (v0, v2) in zip(theta0, theta2)]
 sc = scalar_prod(dys, dxs) / scalar_prod(dxs, dxs)
 print(sc)
 dys = [dy - sc*dx for (dx, dy) in zip(dxs, dys)]
+
+#sess.run(reassign_ds)
 
 
 '''
@@ -99,39 +143,48 @@ sess.run(tf.global_variables_initializer())
 dxs = sess.run(theta)
 sess.run(tf.global_variables_initializer())
 dys = sess.run(theta)
+'''
 
 
-w = 10
+w = 30
 surface = numpy.zeros([w, w])
-surface_x = numpy.zeros([w, w])
-surface_y = numpy.zeros([w, w])
+surface2 = numpy.zeros([w, w])
 
-zero_x = scalar_prod(theta0, dxs)
-zero_y = scalar_prod(theta0, dys)
+sess.run([add0, add1], feed_dict={d0:-0.5, d1:-0.5})
 
-for (ix, iy) in [(ix, iy) for ix in range(w) for iy in range(w)]:
-    x = ix * 1.0 / (w-1.0) - 0.5
-    y = iy * 1.0 / (w-1.0) - 0.5
-    #x = x * 0.1
-    #y = y * 0.1
-    sess.run([tf.assign(v, v0 + dx * x + dy * y) for (v, v0, dx, dy) in zip(theta, theta0, dxs, dys)])
-    err = converge(100, 128, -1.0)
-    surface[ix, iy] = err
-    th = sess.run(theta)
-    surface_x[ix, iy] = scalar_prod(th, dxs) - zero_x
-    surface_y[ix, iy] = scalar_prod(th, dys) - zero_y
-    print(ix, iy, err)
+d = 2.0 / (w-1.0)
 
+for ix in range(w):
+    for iy in range(w):
+        x = ix * 2.0 / (w - 1.0) - 0.5
+        y = iy * 2.0 / (w - 1.0) - 0.5
+        sess.run([tf.assign(v, v0 + dx * x + dy * y) for (v, v0, dx, dy) in zip(theta, theta0, dxs, dys)])
+        #err = converge(100, 128, 1.0)
+        err = sess.run(cost, feed_dict={X:data_x, Y:data_y})
+        err2 = sess.run(cost, feed_dict={X:data_x2, Y:data_y2})
+        surface[ix, iy] = err
+        surface2[ix, iy] = err2
+        #cut[ix] = err
+        print(ix, err)
+        
+        #sess.run([add0], feed_dict={d0:d})
+    #sess.run([add0, add1], feed_dict={d0:-d*w, d1:d})
+    
 sess.close()
 
-surface_dir = numpy.angle(surface_x + 1j * surface_y) 
-
-surface_color = numpy.zeros([w, w, 3])
-surface_color[:, :, 0] = (surface_x - numpy.min(surface_x)) / (numpy.max(surface_x) - numpy.min(surface_x))
-surface_color[:, :, 1] = (surface_y - numpy.min(surface_y)) / (numpy.max(surface_y) - numpy.min(surface_y))
 
 import matplotlib.pyplot as P
 
-P.imshow(surface)
+f, ((ax1, ax2), (ax3, ax4), (ax5, ax6)) = P.subplots(3, 2, sharex='col', sharey='row')
+ax1.imshow(numpy.log(surface))
+ax2.contour(numpy.log(surface))
+ax3.imshow(numpy.log(surface2))
+ax4.contour(numpy.log(surface2))
+ax5.imshow(numpy.log((surface + surface2)/2.0))
+ax6.contour(numpy.log((surface + surface2)/2.0))
+
+#P.imshow(numpy.log(surface))
 P.show()
+
+
 
