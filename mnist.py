@@ -5,13 +5,12 @@ import network as net
 import Fisher
 import linalg
 import train
+import datasets
 
 #batch_size = 64 * 2
 
 
-X = tf.placeholder(tf.float32, shape=[None, 28, 28, 1])
-Y = tf.placeholder(tf.float32, shape=[None, 10])
-time = tf.constant(0.0)
+
 
 d0 = 1
 
@@ -29,7 +28,7 @@ d4 = 1
 global_step = tf.Variable(0, trainable=False)
 #learning_rate = tf.train.exponential_decay(0.002, global_step, 200.0, 0.8, staircase=True)
 #learning_rate = tf.train.inverse_time_decay(0.002, global_step, 200.0, 0.125, staircase=True)
-learning_rate = 0.001
+learning_rate = 10.002
 
 FROM_SAVE = False
 
@@ -38,7 +37,12 @@ normalize_D = True
 epochs = 10000
 
 ################# GENERATOR ##########3333
-Z = tf.placeholder(tf.float32, shape=[None, d_0])
+
+X, Y, x_batch = datasets.mnist()
+Z, z_batch = datasets.random_normal(d_0)
+
+def batch(batch_size):
+    return {**x_batch(batch_size), **z_batch(batch_size)}
 
 [Z1], vs_0 = net.affine([Z], d_0, d_1*7*7, "G_full")
 Z1 = tf.nn.relu(Z1)
@@ -55,7 +59,7 @@ tf.summary.image('generated', X_gen, max_outputs=16)
 
 ##################### DISCRIMINATOR #######
 
-[X1, X1_gen], vs0 = net.conv_net([X*1.5 - 0.5, X_gen * 1.5 - 0.5], [d0, d1, d2, d3, d3, d3], [4, 4, 4, 2, 1], [2, 2, 1, 1, 1], "D_conv")
+[X1, X1_gen], vs0 = net.conv_net([X*1.5 - 0.5, X_gen * 1.5 - 0.5], [d0, d1, d2, d3, d3, d3], [4, 4, 4, 3, 1], [2, 2, 1, 1, 1], "D_conv")
                                
 X1 = tf.nn.relu(X1)
 X1_gen = tf.nn.relu(X1_gen)
@@ -93,8 +97,8 @@ D_cost += 0.1 * tf.reduce_mean(tf.square(D_real)) + 0.1 * tf.reduce_mean(tf.squa
 G_cost += 0.1 * tf.reduce_mean(tf.square(D_real)) + 0.1 * tf.reduce_mean(tf.square(D_gen))
 '''
 
-#opt = tf.train.GradientDescentOptimizer(learning_rate)
-opt = tf.train.AdamOptimizer(learning_rate, 0.0, 0.99, epsilon=0.001)
+opt = tf.train.GradientDescentOptimizer(learning_rate)
+#opt = tf.train.AdamOptimizer(learning_rate, 0.0, 0.999, epsilon=0.0001)
 
 info = []
 step = []
@@ -119,25 +123,12 @@ info = info + [err]
 step = step + [opt.apply_gradients(zip(grads, discriminator + generator), global_step=global_step)]
 
 
-from tensorflow.examples.tutorials.mnist import input_data
-mnist = input_data.read_data_sets('MNIST_data')
-
-def batch(batch_size):
-    b = mnist.train.next_batch(batch_size)
-    #return numpy.reshape(b[0], [batch_size, 28, 28, 1]), numpy.random.normal(0.0, 1.0, [batch_size, d_0])
-    mask = b[1]==2
-    return numpy.reshape(b[0][mask], [-1, 28, 28, 1]), numpy.random.normal(0.0, 1.0, [numpy.sum(mask), d_0])
-
 save_dir = "MNIST_GAN"
 
 if FROM_SAVE==False:
     import os
     for file in os.listdir(save_dir):
         os.remove(os.path.join(save_dir, file))
-
-import pickle
-pick_file = open(save_dir+"/img_evol.pkl", 'wb')
-pick = pickle.Pickler(pick_file)
 
 
 merged = tf.summary.merge_all()
@@ -152,22 +143,19 @@ if FROM_SAVE:
 else:
     sess.run(tf.global_variables_initializer())
 
-batch_size = 64 * 10
+batch_size = 64 * 4
 
 try:
-    const_x, const_z = batch(batch_size)
+    const_dict = batch(batch_size)
     
     for t in range(epochs):
         for _ in range(1):
-            x, z = batch(batch_size)
-            
-            _, cost = sess.run([step, D_cost], feed_dict={X:x, Z:z, time:t})
+            _, cost = sess.run([step, D_cost], feed_dict=batch(batch_size))
             print(cost)
 
         if t % 5 == 0:
             print("SAVE IMAGE")
-            summary, x_gen, d_gen, d_real = sess.run([merged, X_gen, D_real, D_gen], feed_dict={X:const_x, Z:const_z})
-            pick.dump({'X_gen':x_gen, 'D_gen':d_gen, 'D_real':d_real})
+            summary, x_gen, d_gen, d_real = sess.run([merged, X_gen, D_real, D_gen], feed_dict=const_dict)
             
             train_writer.add_summary(summary, t)
             train_writer.flush()
@@ -176,19 +164,11 @@ try:
 finally:
     print("closing")
     saver.save(sess, save_dir + '/model.ckpt')
-    pick_file.close()
     sess.close()
     train_writer.close()
 
 # tensorboard --logdir=MNIST_GAN --reload_interval=4
 
-import matplotlib.pyplot as P
-w = 2
-f, arr = P.subplots(w, w)
-for ix in range(w):
-    for iy in range(w):
-        arr[ix, iy].imshow(x_gen[iy*w + ix, :, :, 0], cmap='gray')
-P.show()
 
 '''
 

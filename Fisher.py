@@ -4,7 +4,7 @@ import tensorflow as tf
 ############
 
 
-def fwd_gradients(ys, xs, d_xs):
+def fwd_gradients(ys, xs, d_xs=None):
   """Forward-mode pushforward analogous to the pullback defined by tf.gradients.
   With tf.gradients, grad_ys is the vector being pulled back, and here d_xs is
   the vector being pushed forward."""

@@ -15,10 +15,10 @@ time = tf.constant(0.0)
 d_0 = 2
 d0 = 2
 
-learning_rate = 0.0005
+learning_rate = 0.01 # 0.0001
 from_save = False
 
-epochs = 3000
+epochs = 50 # 1000
 
 ################# GENERATOR ##########3333
 Z = tf.placeholder(tf.float32, shape=[None, d_0])
@@ -29,7 +29,7 @@ Z = tf.placeholder(tf.float32, shape=[None, d_0])
 
 
 ######################### COSTS #############
-'''
+
 D_cost = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(None, tf.ones_like(D_real), D_real)) + \
          tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(None, tf.zeros_like(D_gen), D_gen))
 G_cost = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(None, tf.ones_like(D_gen), D_gen))
@@ -38,7 +38,7 @@ G_cost = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(None, tf.ones_li
 D_cost = tf.reduce_mean(D_real) - tf.reduce_mean(D_gen)
 G_cost = tf.reduce_mean(D_gen)
 
-
+'''
 #D_cost += 0.1 * tf.reduce_mean(tf.square(D_real)) + 0.1 * tf.reduce_mean(tf.square(D_gen))
 #G_cost += 0.1 * tf.reduce_mean(tf.square(D_real)) + 0.1 * tf.reduce_mean(tf.square(D_gen))
 
@@ -50,12 +50,12 @@ info = []
 step = []
 
 grads = tf.gradients(D_cost, discriminator) + tf.gradients(G_cost, generator)
-
+'''
 ### Natural gradient
 full_F = Fisher.linear_Fisher([D_real, D_gen], discriminator + generator, 0.01)
 grads, err = linalg.conjgrad(full_F, grads, grads, 10)
 info = info + [err]
-
+'''
 ### add damping
 #grads, upd = train.damp_gradients(grads)
 #step = step + [upd]
@@ -64,6 +64,12 @@ info = info + [err]
 step = step + [opt.apply_gradients(zip(grads, discriminator + generator))]
 
 
+F = Fisher.linear_Fisher([X_gen], generator)
+eigs_F, eig_vecs_F, step_eig = linalg.keep_eigs(F, [tf.shape(v) for v in generator], 2, 2)
+steepest_grads = [Fisher.fwd_gradients([X_gen], generator, evf)[0] for evf in eig_vecs_F]
+
+
+step = step + [step_eig]
 
 def sample(n):
     theta = numpy.random.uniform(0.0, 2*numpy.pi, [n, 1])
@@ -75,12 +81,15 @@ grid_x0, grid_x1 = numpy.meshgrid(numpy.linspace(-1.5, 1.5, 16), numpy.linspace(
 grid_x = numpy.concatenate([numpy.reshape(grid_x0, [-1, 1]), numpy.reshape(grid_x1, [-1, 1])], 1)
 const_z = numpy.random.uniform(-0.5, 0.5, [batch_size, d_0])
 
-x_gen = numpy.zeros([0, 2])
+x_gen = numpy.zeros([batch_size, 2])
+grad_x = numpy.ones([batch_size, 2])
 running = True
 x = sample(batch_size)
 d_surf = numpy.zeros([16, 16]) + 1.0
 
 import matplotlib.pyplot as P
+
+'''
 import threading
 
 def run_plot():
@@ -91,7 +100,8 @@ def run_plot():
                        extent=(-1.5, 1.5, -1.5, 1.5),
                        vmin=-5.0, vmax=5.0,
                        interpolation='bilinear')
-    ln_gen, = P.plot(x_gen[:, 0], x_gen[:, 1], 'bo')
+    #ln_gen, = P.plot(x_gen[:, 0], x_gen[:, 1], 'bo')
+    ln_gen = P.quiver(x_gen[:, 0], x_gen[:, 1], grad_x[:, 0], grad_x[:, 1])
     ln_real, = P.plot(const_x[:, 0], const_x[:, 1], 'ro')
     P.ion()
     P.show()
@@ -99,8 +109,12 @@ def run_plot():
     while(running):
         P.pause(0.01)
         ln_surf.set_array(d_surf)
-        ln_gen.set_xdata(x_gen[:, 0])
-        ln_gen.set_ydata(x_gen[:, 1])
+        #ln_gen.set_xdata(x_gen[:, 0])
+        #ln_gen.set_ydata(x_gen[:, 1])
+        ln_gen.X = x_gen[:, 0]
+        ln_gen.Y = x_gen[:, 1]
+        ln_gen.U = grad_x[:, 0]
+        ln_gen.V = grad_x[:, 1]
         #ln_real.set_xdata(x[:, 0])
         #ln_real.set_ydata(x[:, 1])
         P.draw()       
@@ -109,7 +123,7 @@ def run_plot():
 thread = threading.Thread(target=run_plot)
 thread.deamon = True
 thread.start()
-
+'''
 
 sess = tf.Session()
 
@@ -126,8 +140,19 @@ for t in range(epochs):
         print(cost)
 
     if t % 5 == 0:
-        x_gen, d_real, d_gen = sess.run([X_gen, D_real, D_gen], feed_dict={X:grid_x, Z:const_z})
+        x_gen, grad_x, d_real, d_gen = sess.run([X_gen, steepest_grads, D_real, D_gen], feed_dict={X:grid_x, Z:const_z})
         d_surf = numpy.reshape(d_real, [16, 16])
+
+        P.imshow(d_surf, animated=True,
+                       extent=(-1.5, 1.5, -1.5, 1.5),
+                       vmin=-5.0, vmax=5.0,
+                       interpolation='bilinear')
+        P.plot(const_x[:, 0], const_x[:, 1], 'bo')
+        
+        ln_gen = P.quiver(x_gen[:, 0], x_gen[:, 1], grad_x[0][:, 0], grad_x[0][:, 1], color='r')
+        ln_gen = P.quiver(x_gen[:, 0], x_gen[:, 1], grad_x[1][:, 0], grad_x[1][:, 1], color='g')
+
+        P.show()
         
 running = False
 sess.close()

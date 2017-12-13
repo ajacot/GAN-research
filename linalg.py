@@ -8,7 +8,13 @@ def scalar_prod(xs, ys):
 def norm(xs):
     return tf.sqrt(scalar_prod(xs, xs))
 
-def conjgrad(T, b, x, n=100):
+def conjgrad(T, b, x, n=5):
+    '''Tx = T(x)
+    if scale:
+        sc = tf.sqrt(scalar_prod(b, b) / scalar_prod(Tx, Tx))
+        x = [xx * sc for xx in x]
+        Tx = [Txx * sc for Txx in Tx]'''
+    
     r = [ib - iT for (ib, iT) in zip(b, T(x))]
     p = r
     rsold = scalar_prod(r, r)
@@ -38,16 +44,23 @@ def orthogonalize(vs):
         vs[i] = [vi / (ni+0.000) for vi in vs[i]]
     return vs
 
-def power_eig(T, vs, num_steps=5):
+def power_eig(T, vs, num_steps=5, inverse=False, n_conjgrad=1):
     for t in range(num_steps):
-        T_vs = [T(v) for v in vs]
-        if t==num_steps-1:
-            es = [scalar_prod(v, T_v) for (v, T_v) in zip(vs, T_vs)]
-        vs = orthogonalize(T_vs)
-    return vs, es
+        if t > 0:
+            orth_vs = orthogonalize(vs)
+        else:
+            orth_vs = vs
+        
+        if inverse:
+            vs = [conjgrad(T, orth_v, v, n_conjgrad)[0] for (v, orth_v) in zip(vs, orth_vs)]
+        else:
+            vs = [T(v) for v in orth_vs]
+    
+    return vs
 
 
-def keep_eigs(T, shapes, n = 5, num_steps = 5, shift = 0.0):
+
+def keep_eigs(T, shapes, n = 5, num_steps = 5, shift = 0.0, inverse=False, n_conjgrad=1):
     if shift != 0.0:
         def TT(dxs):
             return [dx * shift + Tdx for (dx, Tdx) in zip(dxs, T(dxs))]
@@ -57,8 +70,8 @@ def keep_eigs(T, shapes, n = 5, num_steps = 5, shift = 0.0):
     eig_vecs = [[tf.Variable(tf.random_normal(sh, 0.0, 1.0 / tf.sqrt(tf.cast(tf.reduce_prod(sh), tf.float32))))
                  for sh in shapes]
                 for i in range(n)]
-    new_eig_vecs, eigs = power_eig(TT, eig_vecs, num_steps)
-    eigs = [e - shift for e in eigs]
+    new_eig_vecs = power_eig(TT, eig_vecs, num_steps, inverse, n_conjgrad)
+    eigs = [norm(v) - tf.abs(shift) for v in new_eig_vecs]
     return eigs, eig_vecs, [tf.assign(v, new_v)
          for (vs, new_vs) in zip(eig_vecs, new_eig_vecs)
          for (v, new_v) in zip(vs, new_vs)]
