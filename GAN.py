@@ -8,32 +8,36 @@ import train
 import datasets
 
 
-batch_size = 64*2
+batch_size = 32
 
 
 
 d0 = 3
 
-d_0 = 300
-d_1 = 228
-d_2 = 128
-d_3 = 64
+d_0 = 50
+d_1 = 328
+d_2 = 228
+d_3 = 164
 
-d1 = 104
-d2 = 228
-d3 = 228
+d1 = 204
+d2 = 328
+d3 = 328
 d4 = 1
 
-
 global_step = tf.Variable(0, trainable=False)
-#learning_rate = tf.train.exponential_decay(2.0, global_step, 200.0, 0.5, staircase=True)
+#learning_rate = tf.train.exponential_decay(0.3, global_step, 200.0, 0.75, staircase=True)
 #learning_rate = tf.train.inverse_time_decay(2.0, global_step, 200.0, 0.125, staircase=False)
-learning_rate = 25.02
+learning_rate = 7.0 #25.02
 
-FROM_SAVE = False
+FROM_SAVE = True
 
-normalize_G = True
-normalize_D = True
+normalize_G = False
+normalize_D = False
+non_lin_G = net.shift_relu
+non_lin_D = net.shift_relu
+mult_b_D = 0.1
+mult_b_G = 0.1
+
 epochs = 10000
 
 ################# GENERATOR ##########3333
@@ -42,12 +46,15 @@ Z, z_batch = datasets.random_normal(d_0)
 
 X = iterator.get_next()
 
-[Z1], vs_0 = net.affine([Z], d_0, d_1*4*4, "G_full")
-Z1 = tf.nn.relu(Z1)
-Z1, = net.normalize([Z1], [0])
+[Z1], vs_0 = net.affine([Z], d_0, d_1*4*4, "G_full", mult_b=mult_b_G)
+Z1 = non_lin_G(Z1) # tf.nn.relu(Z1)
+if normalize_G:
+    Z1, = net.normalize([Z1], [0])
 Z1 = tf.reshape(Z1, [-1, 4, 4, d_1])
 
-[X_gen], vs_1 = net.deconv_net([Z1], [d_1, d_1, d_1, d_2, d_3, d0], [2, 6, 6, 6, 6], [1, 2, 2, 2, 2], tf.shape(Z)[0], [4, 4], "G_conv")
+[X_gen], vs_1 = net.deconv_net([Z1], [d_1, d_1, d_1, d_2, d_3, d0],
+                               [2, 6, 6, 6, 6], [1, 2, 2, 2, 2], tf.shape(Z)[0], [4, 4], "G_conv"
+                                 , apply_norm = normalize_G, non_lin = non_lin_G, mult_b = mult_b_G)
 
 X_gen = tf.nn.sigmoid(X_gen)
 
@@ -57,18 +64,22 @@ tf.summary.image('generated', X_gen, max_outputs=16)
 
 ##################### DISCRIMINATOR #######
 
-[X1, X1_gen], vs0 = net.conv_net([X-0.5, X_gen-0.5], [d0, d1, d2, d3, d3, d3], [6, 6, 6, 6, 2], [2, 2, 2, 2, 1], "D_conv")
+[X1, X1_gen], vs0 = net.conv_net([X*2.0-1.0, X_gen*2.0-1.0],
+                                 [d0, d1, d2, d3, d3, d3], [6, 6, 6, 6, 2], [2, 2, 2, 2, 1], "D_conv"
+                                 , apply_norm = normalize_D, non_lin = non_lin_D, mult_b = mult_b_G, var=1.0)
                                
-X1 = tf.nn.relu(X1)
-X1_gen = tf.nn.relu(X1_gen)
-X1, X1_gen = net.normalize([X1, X1_gen], [0, 1, 2])
+X1 = non_lin_D(X1) #tf.nn.relu(X1)
+X1_gen = non_lin_D(X1_gen) #tf.nn.relu(X1_gen)
+if normalize_D:
+    X1, X1_gen = net.normalize([X1, X1_gen], [0, 1, 2])
 X1 = tf.reshape(X1, [-1, 4*4*d3])
 X1_gen = tf.reshape(X1_gen, [-1, 4*4*d3])
 
-[D_real, D_gen], vs1 = net.affine([X1, X1_gen], 4*4*d3, 1, "D")
+[D_real, D_gen], vs1 = net.affine([X1, X1_gen], 4*4*d3, 1, "D", mult_b=mult_b_D, var=0.2)
     
 tf.summary.histogram("D_real", D_real)
 tf.summary.histogram("D_gen", D_gen)
+
 
 
 discriminator = vs0 + vs1
@@ -83,7 +94,12 @@ G_cost = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(None, tf.ones_li
 
 D_cost = tf.reduce_mean(D_real) - tf.reduce_mean(D_gen)
 G_cost = tf.reduce_mean(D_gen)
+
+D_cost += 0.1 * tf.reduce_mean(tf.square(D_real)) + 0.1 * tf.reduce_mean(tf.square(D_gen))
+G_cost += 0.1 * tf.reduce_mean(tf.square(D_real)) + 0.1 * tf.reduce_mean(tf.square(D_gen))
 '''
+
+tf.summary.image('gradient', tf.gradients(G_cost, X_gen)[0], max_outputs=4)
 
 tf.summary.scalar("D_cost", D_cost)
 tf.summary.scalar("G_cost", G_cost)
@@ -91,10 +107,6 @@ tf.summary.scalar("G_cost", G_cost)
 tf.summary.tensor_summary("D_gen", D_gen)
 tf.summary.tensor_summary("D_real", D_real)
 
-'''
-D_cost += 0.1 * tf.reduce_mean(tf.square(D_real)) + 0.1 * tf.reduce_mean(tf.square(D_gen))
-G_cost += 0.1 * tf.reduce_mean(tf.square(D_real)) + 0.1 * tf.reduce_mean(tf.square(D_gen))
-'''
 
 opt = tf.train.GradientDescentOptimizer(learning_rate)
 #opt = tf.train.AdamOptimizer(learning_rate, 0.0, 0.999, epsilon=0.0001)
@@ -104,23 +116,13 @@ step = []
 
 grad_G = tf.gradients(G_cost, generator)
 grad_D = tf.gradients(D_cost, discriminator)
-'''
-### add damping
-grad_D, upd_D = train.damp_gradients(grad_D, 0.0001)
-grad_G, upd_G = train.damp_gradients(grad_G, 0.0001)
-step = step + [upd_D, upd_G]
-'''
+
 grads = grad_D + grad_G
 
-'''
-### Natural gradient
-full_F = Fisher.linear_Fisher([D_real, D_gen], discriminator + generator, 0.01)
-grads, err = linalg.conjgrad(full_F, grads, grads, 5)
-info = info + [err]
-'''
 
 step = step + [opt.apply_gradients(zip(grads, discriminator + generator), global_step=global_step)]
-
+step_D = opt.apply_gradients(zip(grad_D, discriminator), global_step=global_step)
+step_G = opt.apply_gradients(zip(grad_G, generator))
 
 save_dir = "GAN"
 
@@ -148,7 +150,9 @@ try:
     
     for t in range(epochs):
         for _ in range(1):
-            _, cost = sess.run([step, D_cost], feed_dict=z_batch(batch_size))
+            #_, cost = sess.run([step, D_cost], feed_dict=z_batch(batch_size))
+            _ = sess.run([step_D], feed_dict=z_batch(batch_size))
+            _, cost = sess.run([step_G, D_cost], feed_dict=z_batch(batch_size))
             print(cost)
 
         if t % 5 == 0:

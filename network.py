@@ -2,39 +2,44 @@ import numpy
 import tensorflow as tf
 
 
-def affine(xs, d0, d1, info):
-    W = tf.Variable(tf.random_normal([d0, d1],
-                        stddev=1.0 / tf.sqrt(d0*1.0)),
-                        name=info+"_W")
-    #b = tf.Variable(tf.zeros([d1]), name=info+"_b")
-    b = tf.Variable(tf.random_normal([d1]), name=info+"_b")
-    #return ([(tf.matmul(x, W)+b) / tf.sqrt(d0*1.0) for x in xs], [W, b])
-    return ([(tf.matmul(x, W)+b) for x in xs], [W, b])
+def shift_relu(x):
+    return (tf.nn.relu(x) - 0.3 + 0.01*x) * 1.4
 
-def deconv(xs, width, stride, d0, d1, shape, info):
-    W = tf.Variable(tf.random_normal([width, width, d1, d0]),
-                        name=info+"_W")
+def gaussian(x):
+    return tf.exp(-tf.square(x - 0.8) * 2.5) * 3.5 - 0.2
+
+def atan(x):
+    return tf.maximum(tf.minimum(x, 0.5), -0.5) *0.7
+
+
+def affine(xs, d0, d1, info="A", var=1.0, mult_b=0.1):
+    W = tf.Variable(tf.random_normal([d0, d1], stddev=var), name=info+"_W", validate_shape=False)
+    #b = tf.Variable(tf.zeros([d1]), name=info+"_b")
+    b = tf.Variable(tf.random_normal([d1], stddev=var), name=info+"_b", validate_shape=False)
+    return ([tf.matmul(x, W) / tf.sqrt(tf.cast(d0, tf.float32))+b*mult_b for x in xs], [W, b])
+
+def deconv(xs, width, stride, d0, d1, shape, info, var=1.0, mult_b=0.1):
+    W = tf.Variable(tf.random_normal([width, width, d1, d0], stddev=var), name=info+"_W")
     #stddev=stride * 1.0 / (width*tf.sqrt(d0*1.0))),
     b = tf.Variable(tf.zeros([d1]), name=info+"_b")
-    return ([(tf.nn.conv2d_transpose(x, W, shape + [d1], [1, stride, stride, 1], 'SAME')+b) / (width*tf.sqrt(d0*1.0))
+    return ([tf.nn.conv2d_transpose(x, W, shape + [d1], [1, stride, stride, 1], 'SAME')*stride / (width*tf.sqrt(d0*1.0))+b*mult_b
                  for x in xs], [W, b])
 
-def conv(xs, width, stride, d0, d1, info):
-    W = tf.Variable(tf.random_normal([width, width, d0, d1]),
-                        name=info+"_W")
+def conv(xs, width, stride, d0, d1, info, var=1.0, mult_b=0.1):
+    W = tf.Variable(tf.random_normal([width, width, d0, d1], stddev=var), name=info+"_W")
     # stddev=1.0 / (width*tf.sqrt(d0*1.0))),
     b = tf.Variable(tf.zeros([d1]), name=info+"_b")
-    return ([(tf.nn.conv2d(x, W, [1, stride, stride, 1], 'SAME') + b) / (width*tf.sqrt(d0*1.0))
+    return ([tf.nn.conv2d(x, W, [1, stride, stride, 1], 'SAME') / (width*tf.sqrt(d0*1.0))+b*mult_b
                  for x in xs], [W, b])
 
 
 def deconv_net(xs, dims, widths, strides, batch_size, shape,
-               info, apply_norm=True, non_lin=tf.nn.relu):
+               info, apply_norm=True, non_lin=tf.nn.relu, var=1.0, mult_b=0.1):
     variables = []
     for i in range(len(dims)-1):
         shape = [strides[i]*s for s in shape]
         xs, vs = deconv(xs, widths[i], strides[i], dims[i], dims[i+1],
-                     [batch_size]+shape, info + str(i))
+                     [batch_size]+shape, info + str(i), var, mult_b)
         variables = variables + vs
         if i < len(dims)-2:
             xs = [non_lin(x) for x in xs]
@@ -44,11 +49,11 @@ def deconv_net(xs, dims, widths, strides, batch_size, shape,
 
 
 def conv_net(xs, dims, widths, strides,
-             info, apply_norm=True, non_lin=tf.nn.relu):
+             info, apply_norm=True, non_lin=tf.nn.relu, var=1.0, mult_b=0.1):
     variables = []
     for i in range(len(dims)-1):
         xs, vs = conv(xs, widths[i], strides[i], dims[i], dims[i+1],
-                     info + str(i))
+                     info + str(i), var, mult_b)
         variables = variables + vs
         if i < len(dims)-2:
             xs = [non_lin(x) for x in xs]
@@ -58,10 +63,10 @@ def conv_net(xs, dims, widths, strides,
 
 
 def affine_net(xs, dims,
-               info, apply_norm=True, non_lin=tf.nn.relu):
+               info, apply_norm=True, non_lin=tf.nn.relu, var=1.0, mult_b=0.1):
     variables = []
     for i in range(len(dims)-1):
-        xs, vs = affine(xs, dims[i], dims[i+1], info + str(i))
+        xs, vs = affine(xs, dims[i], dims[i+1], info + str(i), var, mult_b)
         variables = variables + vs
         if i < len(dims)-2:
             xs = [non_lin(x) for x in xs]
@@ -71,6 +76,11 @@ def affine_net(xs, dims,
                 #step_norm = step_norm + [step]
     return (xs, variables)
 
+def fix_weights(theta):
+    return [fix_L2(M) for M in theta[0:len(theta)-2:2]]
+
+def fix_L2(M):
+    return tf.assign(M, M / tf.sqrt(tf.reduce_mean(tf.square(M), axis=1, keepdims=True)))
 
 def normalize(X, dims=[0], variance_epsilon=0.01):
     mean, var = tf.nn.moments(X[0], dims, keep_dims=True)
@@ -109,7 +119,7 @@ def get_subset(net, skip = 10):
 
 right_90 = numpy.array([[0.0, -1.0], [1.0, 0.0]], numpy.float32)
 
-def sparse_deconv2D(vs, ps, rs, ints, n, k, d0, d1):
+def sparse_deconv2D(vs, ps, rs, ints, n, k, d0, d1, non_lin=tf.nn.relu, beta=0.1):
     # features vs :: batch_size, n, d0
     # positions ps :: batch_size, n, d
     # rot_scalings rs :: batch_size, n, d
@@ -121,20 +131,20 @@ def sparse_deconv2D(vs, ps, rs, ints, n, k, d0, d1):
             + tf.reshape(rs[:, :, 1], [-1, n, 1, 1]) * tf.tensordot(x, right_90, [[3], [0]]))
 
     theta = []
-    dims = [d0, d0 * 3, d1*k + d*k + d*k + k]
+    dims = [d0, d1*k + d*k + d*k + k]
     for i in range(len(dims)-1):
         #vs = tf.nn.relu(vs)
         #vs, = normalize([vs], [0, 1])
         W = tf.Variable(tf.random_normal([dims[i], dims[i+1]]),name="W")
         b = tf.Variable(tf.zeros([dims[i+1]]), name="b")
-        vs = (tf.tensordot(vs, W, [[2], [0]])+b) / tf.sqrt(dims[i]*1.0)
+        vs = tf.tensordot(vs, W, [[2], [0]]) / tf.sqrt(dims[i]*1.0) + b * beta
         theta = theta + [W, b]
 
     new_vs, new_ps, new_rs, new_ints = tf.split(vs, [d1*k, d*k, d*k, k], 2)
     new_ps = tf.reshape(new_ps, [-1, n, k, 2])
     new_rs = tf.reshape(new_rs, [-1, n, k, 2]) * 0.3
     
-    new_vs = tf.reshape(new_vs, [-1, n*k, d1])
+    new_vs = tf.reshape(non_lin(new_vs), [-1, n*k, d1])
     
     new_ps = tf.reshape(apply_rs(new_ps) + tf.reshape(ps, [-1, n, 1, d]), [-1, n*k, d])
     new_rs = tf.reshape(apply_rs(new_rs), [-1, n*k, d])
@@ -142,11 +152,11 @@ def sparse_deconv2D(vs, ps, rs, ints, n, k, d0, d1):
     
     return new_vs, new_ps, new_rs, new_ints, theta
 
-def sparse_deconv_net(vs, ps, rs, ints, n0, ks, dims):
+def sparse_deconv_net(vs, ps, rs, ints, n0, ks, dims, non_lin=tf.nn.relu, beta=0.1):
     n = n0
     theta = []
     for i in range(len(ks)):
-        vs, ps, rs, ints, thet = sparse_deconv2D(vs, ps, rs, ints, n, ks[i], dims[i], dims[i+1])
+        vs, ps, rs, ints, thet = sparse_deconv2D(vs, ps, rs, ints, n, ks[i], dims[i], dims[i+1], non_lin, beta)
         theta = theta + thet
         n = n*ks[i]
 

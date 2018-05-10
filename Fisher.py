@@ -44,6 +44,13 @@ def softmax_Fisher(ys, xs, a=0.01):
     return F
 
 
+def tangent_kernel(ys, xs):
+    def F(dys):
+      dxs = tf.gradients(ys, xs, dys)
+      ddys = fwd_gradients(ys, xs, dxs)
+      return ddys #[ddx * (1.0 - a) / batch_size + a * dx for (ddx, dx) in zip(ddxs, dxs)]
+    return F
+
 def Hessian(y, xs):
     grad_xs = tf.gradients([y], xs)
     def H(dxs):
@@ -52,12 +59,12 @@ def Hessian(y, xs):
     return H
 
 
-
 ################# full computation ##########
 
 def derivative(ys, xs):
     index = tf.placeholder(tf.int32)
-    comp_grad = [tf.gradients(tf.reshape(y, [-1])[index], xs)
+    comp_grad = [[tf.zeros_like(x) if g==None else g
+              for (g, x) in zip(tf.gradients(tf.reshape(y, [-1])[index], xs), xs)]
                  for y in ys]
     def_y_shapes = [tf.shape(y) for y in ys]
     def_x_shapes = [tf.shape(x) for x in xs]
@@ -83,10 +90,18 @@ def derivative(ys, xs):
       return D
     return calculate
 
+
+
+def compute_Hessian(y, xs, dy=None):
+    return derivative(tf.gradients(y, xs, dy), xs)
+      
+
+
+
 def compute_linear_Fisher(ys, xs):
     cal_D = derivative(ys, xs)
     
-    def calculate(sess, feed_dict={}):
+    def calculate_F(sess, feed_dict={}):
       D = cal_D(sess, feed_dict)
       return numpy.dot(D, numpy.transpose(D)) / D.shape[1], D
     return calculate
@@ -116,11 +131,9 @@ def compute_softmax_Fisher(ys, xs):
       return numpy.dot(normed_D, numpy.transpose(normed_D)) / D.shape[1], D
     return calculate
 
-'''
-def compute_softmax_Fisher(sess, ys, xs, feed_dict={}):
-    D = derivative(sess, ys, xs, feed_dict)
-    return numpy.dot(D, numpy.transpose(D)) / D.shape[1]    
-'''
+
+
+
 
 def finite_diff_Hessian(sess, xs, grads, d=0.001, feed_dict={}):
     x0s = sess.run(xs, feed_dict=feed_dict)
@@ -146,10 +159,6 @@ def finite_diff_Hessian(sess, xs, grads, d=0.001, feed_dict={}):
             ii += 1
             sess.run(tf.assign(x, x0))
     return H
-
-def compute_Hessian(y, xs):
-    return derivative(tf.gradients(y, xs), xs)
-
 
 '''
 import network as net

@@ -67,7 +67,8 @@ def keep_eigs(T, shapes, n = 5, num_steps = 5, shift = 0.0, inverse=False, n_con
     else:
         TT = T
         
-    eig_vecs = [[tf.Variable(tf.random_normal(sh, 0.0, 1.0 / tf.sqrt(tf.cast(tf.reduce_prod(sh), tf.float32))))
+    eig_vecs = [[tf.Variable(tf.random_normal(sh, 0.0, 1.0 / tf.sqrt(tf.cast(tf.reduce_prod(sh), tf.float32)))
+                             , validate_shape=False)
                  for sh in shapes]
                 for i in range(n)]
     new_eig_vecs = power_eig(TT, eig_vecs, num_steps, inverse, n_conjgrad)
